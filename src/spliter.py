@@ -15,14 +15,16 @@ class YOLOImagePatch:
             annotation_folder.mkdir(parents=True, exist_ok=True)
         self.ymin, self.xmin, self.ymax, self.xmax = patch_dict['loc']
         self.image = patch_dict['image']
+        self.h, self.w, *c = self.image.shape
         self.annotations = []
 
         self.img_out_path = outfolder / f"{name}.jpg"
         self.annotation_path = annotation_folder / f'{name}.txt'
 
-    def add_label(self, label: str):
+    def add_label(self, label: str, h: int, w: int):
+        label = label.strip()
         label_id, *pos = label.split(' ')
-        points = [(float(x), float(y)) for x, y in zip(pos[0::2], pos[1::2])]
+        points = [(float(x) * w, float(y) * h) for x, y in zip(pos[0::2], pos[1::2])]
         inside = True
         new_points = [label_id]
         # 是否都在内部
@@ -45,7 +47,7 @@ class YOLOImagePatch:
                 try:
                     new_polygon = label_polygon.intersection(bundary)
                 except Exception as why:
-                    logger.error(f'deyi_info: geom invalid, {why=}, {label}')
+                    logger.error(f'geom invalid, {why=}, {label}')
                     return {'error': "多边形扭曲"}
                 if isinstance(new_polygon, Polygon):
                     valid_points = list(new_polygon.exterior.coords)
@@ -56,8 +58,8 @@ class YOLOImagePatch:
                 x, y = point
                 ly = y - self.ymin
                 lx = x - self.xmin
-                new_points += [lx, ly]
-            points_line = ' '.join(new_points)
+                new_points += [round(lx / self.w, 6), round(ly / self.h, 6)]
+            points_line = ' '.join([str(i) for i in new_points])
             self.annotations.append(f'{points_line}\n')
         else:
             return {'error': "多边形超出标注框"}
@@ -76,17 +78,34 @@ class YOLOImageSpliter:
         self.patch_size = patch_size
         self.overlap = overlap
         self.image_path = image_path
-        self.label_path = None
+        self.image = cv.imread(str(image_path))
+        self.name = self.image_path.stem
+        train_name = image_path.parent.stem
+        self.label_path = image_path.parent.parent.parent / 'labels' / train_name / f"{image_path.stem}.txt"
+        self.patches = []
+        self.output_img_folder = image_path.parent.parent.parent.parent / 'split' / 'images' / train_name
+        self.output_label_folder = image_path.parent.parent.parent.parent / 'split' / 'labels' / train_name
 
     def split(self):
         """
         利用滑窗分开图像，并分开label
         """
-        ...
+        h, w, *c = self.image.shape
+        patch_dict = generate_patches_dict(str(self.image_path), self.patch_size, self.overlap)
+        for i, patch in enumerate(patch_dict):
+            patch_obj = YOLOImagePatch(patch, f'{self.name}_{i}', self.output_img_folder, self.output_label_folder)
+            self.patches.append(patch_obj)
+        with self.label_path.open('r') as f:
+            lines = f.readlines()
+            for line in lines:
+                for patch in self.patches:
+                    patch.add_label(line, h, w)
 
-    def save(self, output_folder: Path) -> None:
+    def save(self) -> None:
         """保存分开的子图和标注文件"""
-        raise ValueError('no label for this image')
+        for patch in self.patches:
+            patch.save()
+
 
 
 
