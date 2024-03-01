@@ -46,5 +46,5 @@ def generate_patches_dict(infile: str, chopsize: int = 640, overlap: int = 140):
             patch = img[y:yb, x:xr]
             output.append({'loc': (y, x, yb, xr),
                            'image': patch})
-    return output
+    return output, (h, w, c)
 

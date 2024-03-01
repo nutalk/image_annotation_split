@@ -2,6 +2,7 @@ from pathlib import Path
 from shapely.geometry import Polygon
 from loguru import logger
 import cv2 as cv
+import numpy as np
 from .make_patch import generate_patches_dict
 
 
@@ -15,10 +16,13 @@ class YOLOImagePatch:
             annotation_folder.mkdir(parents=True, exist_ok=True)
         self.ymin, self.xmin, self.ymax, self.xmax = patch_dict['loc']
         self.image = patch_dict['image']
+        self.labeled_image = np.copy(self.image)
         self.h, self.w, *c = self.image.shape
         self.annotations = []
-
+        self.draw_annotations = []
         self.img_out_path = outfolder / f"{name}.jpg"
+        self.draw_img_path = outfolder / f"{name}_draw.jpg"
+
         self.annotation_path = annotation_folder / f'{name}.txt'
 
     def add_label(self, label: str, h: int, w: int):
@@ -54,13 +58,16 @@ class YOLOImagePatch:
                 else:
                     valid_points = []
         if valid_points:
+            draw_annotations = []
             for point in valid_points:
-                x, y = point
-                ly = y - self.ymin
-                lx = x - self.xmin
+                x, y = point # x,y是全局大图坐标
+                ly = min(y - self.ymin, self.h - 1)
+                lx = min(x - self.xmin, self.w - 1)
                 new_points += [round(lx / self.w, 6), round(ly / self.h, 6)]
+                draw_annotations.append([round(lx), round(ly)])
             points_line = ' '.join([str(i) for i in new_points])
             self.annotations.append(f'{points_line}\n')
+            self.draw_annotations.append(draw_annotations)
         else:
             return {'error': "多边形超出标注框"}
 
@@ -70,6 +77,14 @@ class YOLOImagePatch:
         with open(self.annotation_path, 'w') as f:
             for line in self.annotations:
                 f.write(line)
+        draw_image = np.copy(self.image)
+        for draw in self.draw_annotations:
+            logger.info(draw)
+            pts = np.array(draw, np.int32)
+            # pts = pts.reshape((-1, 1, 2))
+            logger.info(pts)
+            cv.polylines(draw_image, [pts], True, (0, 255, 0), 2)
+        cv.imwrite(str(self.draw_img_path), draw_image)
 
 
 # 带yolo 数据分割标注的图像, https://docs.ultralytics.com/zh/datasets/segment/
@@ -91,7 +106,7 @@ class YOLOImageSpliter:
         利用滑窗分开图像，并分开label
         """
         h, w, *c = self.image.shape
-        patch_dict = generate_patches_dict(str(self.image_path), self.patch_size, self.overlap)
+        patch_dict, self.merge_shape = generate_patches_dict(str(self.image_path), self.patch_size, self.overlap)
         for i, patch in enumerate(patch_dict):
             patch_obj = YOLOImagePatch(patch, f'{self.name}_{i}', self.output_img_folder, self.output_label_folder)
             self.patches.append(patch_obj)
